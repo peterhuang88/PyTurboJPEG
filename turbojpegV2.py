@@ -26,7 +26,6 @@ from ctypes import *
 import platform
 import numpy as np
 import math
-import matplotlib.pyplot as plt
 
 # default libTurboJPEG library path
 DEFAULT_LIB_PATH = {
@@ -65,32 +64,40 @@ class TurboJPEG(object):
             DEFAULT_LIB_PATH[platform.system()] if lib_path is None else lib_path)
         self.__init_decompress = turbo_jpeg.tjInitDecompress
         self.__init_decompress.restype = c_void_p
+        
         self.__init_compress = turbo_jpeg.tjInitCompress
         self.__init_compress.restype = c_void_p
+        
         self.__destroy = turbo_jpeg.tjDestroy
         self.__destroy.argtypes = [c_void_p]
         self.__destroy.restype = c_int
+        
         self.__decompress_header = turbo_jpeg.tjDecompressHeader3
         self.__decompress_header.argtypes = [
             c_void_p, POINTER(c_ubyte), c_ulong, POINTER(c_int),
             POINTER(c_int), POINTER(c_int), POINTER(c_int)]
         self.__decompress_header.restype = c_int
+        
         self.__decompress = turbo_jpeg.tjDecompress2
         self.__decompress.argtypes = [
             c_void_p, POINTER(c_ubyte), c_ulong, POINTER(c_ubyte),
             c_int, c_int, c_int, c_int, c_int]
         self.__decompress.restype = c_int
+        
         self.__compress = turbo_jpeg.tjCompress2
         self.__compress.argtypes = [
             c_void_p, POINTER(c_ubyte), c_int, c_int, c_int, c_int,
             POINTER(c_void_p), POINTER(c_ulong), c_int, c_int, c_int]
         self.__compress.restype = c_int
+        
         self.__free = turbo_jpeg.tjFree
         self.__free.argtypes = [c_void_p]
         self.__free.restype = None
+        
         self.__get_error_str = turbo_jpeg.tjGetErrorStr
         self.__get_error_str.restype = c_char_p
         self.__scaling_factors = []
+        
         class ScalingFactor(Structure):
             _fields_ = ('num', c_int), ('denom', c_int)
         get_scaling_factors = turbo_jpeg.tjGetScalingFactors
@@ -98,11 +105,12 @@ class TurboJPEG(object):
         get_scaling_factors.restype = POINTER(ScalingFactor)
         num_scaling_factors = c_int()
         scaling_factors = get_scaling_factors(byref(num_scaling_factors))
+        
         for i in range(num_scaling_factors.value):
             self.__scaling_factors.append(
                 (scaling_factors[i].num, scaling_factors[i].denom))
 
-    def decode(self, jpeg_buf, pixel_format=TJPF_RGB, scaling_factor=None):
+    def decode(self, jpeg_buf, new_width, new_height, pixel_format=TJPF_BGR, scaling_factor=None):
         """decode JPEG memory buffer to numpy array."""
         handle = self.__init_decompress()
         try:
@@ -111,19 +119,39 @@ class TurboJPEG(object):
                 raise ValueError('supported scaling factors are ' +
                     str(self.__scaling_factors))
             pixel_size = [3, 3, 4, 4, 4, 4, 1, 4, 4, 4, 4, 4]
+            
             width = c_int()
             height = c_int()
             jpeg_subsample = c_int()
             jpeg_colorspace = c_int()
             jpeg_array = np.frombuffer(jpeg_buf, dtype=np.uint8)
             src_addr = jpeg_array.ctypes.data_as(POINTER(c_ubyte))
+            
             status = self.__decompress_header(
                 handle, src_addr, jpeg_array.size, byref(width), byref(height),
                 byref(jpeg_subsample), byref(jpeg_colorspace))
+            
             if status != 0:
                 raise IOError(self.__get_error_str().decode())
-            scaled_width = width.value
-            scaled_height = height.value
+                
+            """
+            if (new_width != 0) and (new_height != 0):
+                scaled_width = new_width
+                scaled_height = new_height
+            elif (new_width != 0):
+                scaled_width = new_width
+                scaled_height = height.value
+            elif (new_height != 0):
+                scaled_width = width.value
+                scaled_height = new_height
+            else:
+                scaled_width = new_width
+                scaled_height = new_height
+            """
+            
+            print(str(scaled_width))
+            print(str(scaled_height))
+            
             if scaling_factor is not None:
                 def get_scaled_value(dim, num, denom):
                     return (dim * num + denom - 1) // denom
@@ -131,17 +159,26 @@ class TurboJPEG(object):
                     scaled_width, scaling_factor[0], scaling_factor[1])
                 scaled_height = get_scaled_value(
                     scaled_height, scaling_factor[0], scaling_factor[1])
+            
+            
             img_array = np.empty(
                 [scaled_height, scaled_width, pixel_size[pixel_format]],
                 dtype=np.uint8)
+            
             dest_addr = img_array.ctypes.data_as(POINTER(c_ubyte))
+            
             status = self.__decompress(
                 handle, src_addr, jpeg_array.size, dest_addr, scaled_width,
                 0, scaled_height, pixel_format, 0)
+            
             if status != 0:
                 raise IOError(self.__get_error_str().decode())
             
+            if (new_width != None) and (new_height != None):
+                img_array = cv2.resize(img_array, (new_width, new_height))
+                
             return img_array
+        
         finally:
             self.__destroy(handle)
 
@@ -168,16 +205,10 @@ class TurboJPEG(object):
 if __name__ == '__main__':
     jpeg = TurboJPEG()
     in_file = open('cat.1.jpg', 'rb')
-    img_array = jpeg.decode(in_file.read())
+    img_array = jpeg.decode(in_file.read(), 64, 64)
     in_file.close()
-    #out_file = open('output.jpg', 'wb')
+    # out_file = open('output.jpg', 'wb')
     #out_file.write(jpeg.encode(img_array))
-    # out_file.close()
-    # import cv2
-    #cv2.imshow('image', img_array)
-    #plt.imshow(img_array)
-    
-    #img_array  = cv2.imread('cat.1.jpg')
+    #out_file.close()
+    import matplotlib.pyplot as plt
     plt.imshow(img_array)
-    
-    #print(img_array.shape)
